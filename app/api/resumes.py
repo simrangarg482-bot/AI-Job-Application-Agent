@@ -8,6 +8,12 @@ from app.models.resume import ResumeUploadResponse
 from app.core.database import get_db
 from app.services import resume_repository
 from app.services.resume_parser import parse_resume_text, ParsingError
+from app.services.normalizer import normalize_resume
+
+import json
+from app.services.resume_text_builder import build_resume_summary_text
+from app.services.embedding_service import generate_embedding
+from app.models.parsed_resume import ParsedResume
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -76,6 +82,7 @@ def extract_resume_text(resume_id: str, db: Session = Depends(get_db)):
 
     return {"resume_id": resume_id, "extracted_text": text}
 
+
 @router.post("/{resume_id}/parse")
 def parse_resume(resume_id: str, db: Session = Depends(get_db)):
     record = resume_repository.get_by_id(db, resume_id)
@@ -93,6 +100,8 @@ def parse_resume(resume_id: str, db: Session = Depends(get_db)):
     except ParsingError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    parsed = normalize_resume(parsed)  # <-- new step
+
     record.parsed_data = parsed.model_dump_json()
     record.confidence_score = str(confidence)
     record.status = "parsed"
@@ -102,4 +111,29 @@ def parse_resume(resume_id: str, db: Session = Depends(get_db)):
         "resume_id": resume_id,
         "confidence_score": confidence,
         "parsed_resume": parsed.model_dump(),
+    }
+
+@router.post("/{resume_id}/embed")
+def embed_resume(resume_id: str, db: Session = Depends(get_db)):
+    record = resume_repository.get_by_id(db, resume_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+
+    if not record.parsed_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No parsed data found. Call /parse first.",
+        )
+
+    parsed = ParsedResume(**json.loads(record.parsed_data))
+    summary_text = build_resume_summary_text(parsed)
+    vector = generate_embedding(summary_text)
+
+    record.embedding = json.dumps(vector)
+    db.commit()
+
+    return {
+        "resume_id": resume_id,
+        "embedding_dim": len(vector),
+        "summary_text_used": summary_text,
     }

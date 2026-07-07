@@ -1,0 +1,36 @@
+from sqlalchemy.orm import Session
+from app.models.db_models import JobRecord
+
+
+def get_by_job_id(db: Session, job_id: str) -> JobRecord | None:
+    return db.query(JobRecord).filter(JobRecord.job_id == job_id).first()
+
+
+def upsert_job(db: Session, job_dict: dict) -> JobRecord:
+    existing = get_by_job_id(db, job_dict["job_id"])
+    if existing:
+        # Job already ingested — don't overwrite its embedding, just refresh metadata
+        existing.title = job_dict["title"]
+        existing.company = job_dict["company"]
+        existing.location = job_dict["location"]
+        existing.description = job_dict["description"]
+        existing.salary_min = job_dict["salary_min"]
+        existing.salary_max = job_dict["salary_max"]
+        existing.apply_url = job_dict["apply_url"]
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    record = JobRecord(**job_dict)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def get_unembedded_jobs(db: Session) -> list[JobRecord]:
+    return db.query(JobRecord).filter(JobRecord.embedding.is_(None)).all()
+
+
+def list_all_jobs(db: Session) -> list[JobRecord]:
+    return db.query(JobRecord).all()

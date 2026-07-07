@@ -1,17 +1,15 @@
 import json
 import re
 from openai import OpenAI
-from app.core.config import OPENROUTER_API_KEY
+from anthropic import Anthropic
+from app.core.config import ANTHROPIC_API_KEY
 from pydantic import ValidationError
 
 from app.models.parsed_resume import ParsedResume
 
-client = OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1",
-)
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-MODEL = "qwen/qwen3-32b:free"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You are a precise resume-parsing engine. You extract only information explicitly present in the resume text.
 
@@ -80,16 +78,14 @@ def _call_llm(resume_text: str, strict_followup: bool = False) -> str:
             "no markdown, no commentary.\n\n" + user_prompt
         )
 
-    response = client.chat.completions.create(
+    response = client.messages.create(
         model=MODEL,
         max_tokens=2000,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
     )
 
-    return response.choices[0].message.content
+    return response.content[0].text
 
 
 def parse_resume_text(resume_text: str) -> tuple[ParsedResume, float]:

@@ -14,6 +14,11 @@ import json
 from app.services.resume_text_builder import build_resume_summary_text
 from app.services.embedding_service import generate_embedding
 from app.models.parsed_resume import ParsedResume
+from app.services.matching.retrieval import get_shortlist
+
+from app.services.matching.ranker import rank_jobs
+from app.services.resume_text_builder import build_resume_summary_text
+from app.models.parsed_resume import ParsedResume
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
@@ -137,3 +142,62 @@ def embed_resume(resume_id: str, db: Session = Depends(get_db)):
         "embedding_dim": len(vector),
         "summary_text_used": summary_text,
     }
+
+@router.get("/{resume_id}/shortlist")
+def get_job_shortlist(resume_id: str, top_n: int = 40, db: Session = Depends(get_db)):
+    record = resume_repository.get_by_id(db, resume_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+
+    if not record.embedding:
+        raise HTTPException(
+            status_code=400,
+            detail="No embedding found. Call /embed first.",
+        )
+
+    resume_vector = json.loads(record.embedding)
+    shortlist = get_shortlist(db, resume_vector, top_n=top_n)
+
+    return {
+        "resume_id": resume_id,
+        "shortlist_count": len(shortlist),
+        "shortlist": [
+            {
+                "job_id": job.job_id,
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "similarity_score": round(score, 4),
+            }
+            for job, score in shortlist
+        ],
+    }
+
+
+@router.get("/{resume_id}/rank")
+def rank_resume_jobs(
+    resume_id: str,
+    location_contains: str | None = None,
+    min_salary: int | None = None,
+    db: Session = Depends(get_db),
+):
+    record = resume_repository.get_by_id(db, resume_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+    if not record.embedding or not record.parsed_data:
+        raise HTTPException(status_code=400, detail="Resume must be parsed and embedded first.")
+
+    resume_vector = json.loads(record.embedding)
+    parsed_resume = ParsedResume(**json.loads(record.parsed_data))
+    resume_summary_text = build_resume_summary_text(parsed_resume)
+
+    shortlist = get_shortlist(db, resume_vector, top_n=40)
+    ranked = rank_jobs(
+        shortlist,
+        parsed_resume,
+        resume_summary_text,
+        location_contains=location_contains,
+        min_salary=min_salary,
+    )
+
+    return {"resume_id": resume_id, "result_count": len(ranked), "results": ranked}

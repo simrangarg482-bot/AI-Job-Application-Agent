@@ -10,6 +10,10 @@ MODEL = "gpt-4.1-mini"
 
 SYSTEM_PROMPT = """You analyze a job description against a candidate's resume summary.
 Extract ONLY skills/technologies explicitly required or clearly implied by the job description.
+Also extract a broader list of ATS-relevant keywords: specific tools, certifications,
+methodologies (e.g. "Agile", "Scrum"), and exact terms an Applicant Tracking System
+would scan for verbatim — these can overlap with required_skills but should also include
+softer/broader terms a resume keyword-matcher would look for.
 Do not invent requirements that aren't stated or strongly implied.
 Output ONLY valid JSON, no markdown, no commentary.
 """
@@ -52,9 +56,9 @@ Candidate resume summary:
 \"\"\"
 
 Respond with ONLY this JSON shape:
-
 {{
   "required_skills": ["string"],
+  "ats_keywords": ["string"],
   "explanation": "1-2 sentence explanation of fit, mentioning specific overlaps or gaps"
 }}
 """
@@ -85,6 +89,7 @@ Respond with ONLY this JSON shape:
 
         return {
             "required_skills": data.get("required_skills", []),
+            "ats_keywords": data.get("ats_keywords", []),
             "explanation": data.get("explanation", ""),
         }
 
@@ -92,5 +97,6 @@ Respond with ONLY this JSON shape:
         # One bad job should not break complete ranking
         return {
             "required_skills": [],
+            "ats_keywords": [],
             "explanation": "Could not generate explanation."
-        }
+            }

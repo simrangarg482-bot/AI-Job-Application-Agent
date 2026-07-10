@@ -30,7 +30,7 @@ def compute_total_years_experience(experience: list) -> float:
     """
     Computes total experience by summing date ranges ourselves,
     rather than trusting the LLM's arithmetic.
-    Overlapping roles are NOT deduplicated in this version — see note below.
+    Overlapping roles are NOT deduplicated in this version.
     """
     total_months = 0
 

@@ -20,10 +20,18 @@ from app.services.matching.ranker import rank_jobs
 from app.services.resume_text_builder import build_resume_summary_text
 from app.models.parsed_resume import ParsedResume
 
+from app.services.match_repository import save_match_results, get_matches_for_resume
+from app.models.match_response import MatchesResponse, JobMatchResponse
+from app.models.db_models import JobRecord
+
+from app.models.db_models import VALID_MATCH_STATUSES
+from app.services.match_repository import update_match_status
+from pydantic import BaseModel
+
+
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
 MAX_FILE_SIZE_MB = 5
-
 
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -174,8 +182,8 @@ def get_job_shortlist(resume_id: str, top_n: int = 40, db: Session = Depends(get
     }
 
 
-@router.get("/{resume_id}/rank")
-def rank_resume_jobs(
+@router.post("/{resume_id}/matches/generate", response_model=MatchesResponse)
+def generate_matches(
     resume_id: str,
     location_contains: str | None = None,
     min_salary: int | None = None,
@@ -196,8 +204,82 @@ def rank_resume_jobs(
         shortlist,
         parsed_resume,
         resume_summary_text,
+        resume_raw_text=record.extracted_text,
         location_contains=location_contains,
         min_salary=min_salary,
     )
 
-    return {"resume_id": resume_id, "result_count": len(ranked), "results": ranked}
+    saved_records = save_match_results(db, resume_id, ranked)
+
+    # Join persisted records back with job metadata (title/company/location/apply_url)
+    job_lookup = {j.job_id: j for j, _ in shortlist}
+    results = []
+    for r in saved_records:
+        job = job_lookup.get(r.job_id)
+        results.append(JobMatchResponse(
+            match_id=r.match_id,
+            job_id=r.job_id,
+            title=job.title if job else "Unknown",
+            company=job.company if job else None,
+            location=job.location if job else None,
+            apply_url=job.apply_url if job else None,
+            blended_score=float(r.blended_score),
+            vector_similarity=float(r.vector_similarity),
+            skill_overlap_ratio=float(r.skill_overlap_ratio),
+            matched_skills=json.loads(r.matched_skills),
+            missing_skills=json.loads(r.missing_skills),
+            explanation=r.explanation,
+            status=r.status,
+        ))
+
+    return MatchesResponse(resume_id=resume_id, result_count=len(results), results=results)
+
+
+@router.get("/{resume_id}/matches", response_model=MatchesResponse)
+def list_matches(resume_id: str, status: str | None = None, db: Session = Depends(get_db)):
+    """
+    Reads back already-generated matches WITHOUT recomputing anything —
+    cheap and instant, unlike /matches/generate which runs the full pipeline.
+    """
+    matches = get_matches_for_resume(db, resume_id, status=status)
+    job_ids = [m.job_id for m in matches]
+    jobs = db.query(JobRecord).filter(JobRecord.job_id.in_(job_ids)).all()
+    job_lookup = {j.job_id: j for j in jobs}
+
+    results = []
+    for r in matches:
+        job = job_lookup.get(r.job_id)
+        results.append(JobMatchResponse(
+            match_id=r.match_id,
+            job_id=r.job_id,
+            title=job.title if job else "Unknown",
+            company=job.company if job else None,
+            location=job.location if job else None,
+            apply_url=job.apply_url if job else None,
+            blended_score=float(r.blended_score),
+            vector_similarity=float(r.vector_similarity),
+            skill_overlap_ratio=float(r.skill_overlap_ratio),
+            matched_skills=json.loads(r.matched_skills),
+            missing_skills=json.loads(r.missing_skills),
+            explanation=r.explanation,
+            status=r.status,
+        ))
+
+    return MatchesResponse(resume_id=resume_id, result_count=len(results), results=results)
+
+class MatchStatusUpdate(BaseModel):
+    status: str  # "saved" or "dismissed"
+
+@router.patch("/matches/{match_id}/status")
+def set_match_status(match_id: str, body: MatchStatusUpdate, db: Session = Depends(get_db)):
+    if body.status not in VALID_MATCH_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{body.status}'. Must be one of {VALID_MATCH_STATUSES}.",
+        )
+
+    record = update_match_status(db, match_id, body.status)
+    if not record:
+        raise HTTPException(status_code=404, detail="Match not found.")
+
+    return {"match_id": match_id, "status": record.status}

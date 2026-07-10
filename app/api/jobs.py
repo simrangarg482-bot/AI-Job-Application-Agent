@@ -8,6 +8,7 @@ from app.services.job_sources.adzuna_normalizer import normalize_adzuna_job
 from app.services import job_repository
 from app.services.job_text_builder import build_job_summary_text
 from app.services.embedding_service import generate_embedding
+from app.services.matching.job_vector_store import upsert_job_vector
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -35,16 +36,13 @@ def ingest_jobs(
 
 @router.post("/embed-pending")
 def embed_pending_jobs(db: Session = Depends(get_db)):
-    """
-    Embeds any job that doesn't have a cached embedding yet.
-    Safe to call repeatedly — already-embedded jobs are skipped.
-    """
     pending = job_repository.get_unembedded_jobs(db)
 
     for job in pending:
         text = build_job_summary_text(job)
         vector = generate_embedding(text)
-        job.embedding = json.dumps(vector)
+        upsert_job_vector(job.job_id, vector)
+        job.embedding = "stored_in_qdrant"  # marker, so get_unembedded_jobs() skips it next time
 
     db.commit()
 

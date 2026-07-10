@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from app.core.database import Base
 
+VALID_MATCH_STATUSES = {"new", "saved", "dismissed"}
+
 
 class ResumeRecord(Base):
     __tablename__ = "resumes"
@@ -34,3 +36,22 @@ class JobRecord(Base):
     source = Column(String, nullable=False, default="adzuna")
     embedding = Column(Text, nullable=True)              # JSON-serialized vector, cached
     fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class MatchResult(Base):
+    __tablename__ = "match_results"
+
+    match_id = Column(String, primary_key=True)
+    resume_id = Column(String, nullable=False, index=True)
+    job_id = Column(String, nullable=False, index=True)
+    vector_similarity = Column(String, nullable=False)
+    skill_overlap_ratio = Column(String, nullable=False)
+    blended_score = Column(String, nullable=False)
+    matched_skills = Column(Text, nullable=False)   # JSON list
+    missing_skills = Column(Text, nullable=False)   # JSON list
+    explanation = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="new")  # new/saved/dismissed — Node 11
+    generated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    ats_score = Column(String, nullable=True)
+    ats_found_keywords = Column(Text, nullable=True)    # JSON list
+    ats_missing_keywords = Column(Text, nullable=True)  # JSON list
+    ats_format_score = Column(String, nullable=True)
